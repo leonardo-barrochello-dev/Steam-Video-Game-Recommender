@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+ml/.venv/
+
+# Data files (will be deleted, sourced from Kaggle)
+data/*.csv
+data/*.json
+
+# Build artifacts
+bin/
+obj/
+.vs/
+*.csproj.user
+*.sln.docstates
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Generated model weights
+*.h5
+
+# Database (generated)
+database/recommender.db
+
+# API Keys - use environment variables or appsettings.Development.json
+appsettings.Development.json
+*.user

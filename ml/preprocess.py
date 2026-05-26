@@ -1,0 +1,230 @@
+import pandas as pd
+import json
+import os
+import numpy as np
+from collections import Counter
+
+import kagglehub
+from kagglehub import KaggleDatasetAdapter
+
+ML_DIR = os.path.dirname(__file__)
+KAGGLE_DATASET = "antonkozyriev/game-recommendations-on-steam"
+
+def get_or_create_tag_vocabulary(meta_df, vocab_size=50):
+    """
+    Extracts the most frequent tags and saves them as the vocabulary.
+    """
+    vocab_path = os.path.join(ML_DIR, 'tag_vocabulary.json')
+    if os.path.exists(vocab_path):
+        with open(vocab_path, 'r', encoding='utf-8') as f:
+            vocab = json.load(f)
+        print(f"Loaded existing tag vocabulary of size {len(vocab)}")
+        return vocab
+
+    print("Generating new tag vocabulary...")
+    all_tags = []
+    for tags in meta_df['tags']:
+        if isinstance(tags, list):
+            all_tags.extend(tags)
+
+    tag_counts = Counter(all_tags)
+    most_common = [tag for tag, _ in tag_counts.most_common(vocab_size)]
+
+    with open(vocab_path, 'w', encoding='utf-8') as f:
+        json.dump(most_common, f, ensure_ascii=False, indent=2)
+
+    print(f"Generated and saved tag vocabulary of size {len(most_common)}")
+    return most_common
+
+def load_data(sample_frac=1.0):
+    """
+    Loads datasets from Kaggle Hub (downloads and caches locally on first run).
+    Subsequent runs use the local cache — no re-download needed.
+    """
+    print("Loading games.csv from Kaggle...")
+    games_df = kagglehub.load_dataset(
+        KaggleDatasetAdapter.PANDAS,
+        KAGGLE_DATASET,
+        "games.csv",
+    )
+
+    print(f"Loading recommendations.csv from Kaggle (sample_frac={sample_frac})...")
+    # For large files, use nrows to limit how much we read from disk if sample_frac < 1
+    # recommendations.csv has ~41M rows — we approximate with nrows for speed
+    TOTAL_REC_ROWS = 41_000_000
+    pandas_kwargs = {}
+    if sample_frac < 1.0:
+        pandas_kwargs['nrows'] = max(1000, int(TOTAL_REC_ROWS * sample_frac))
+
+    recs_df = kagglehub.load_dataset(
+        KaggleDatasetAdapter.PANDAS,
+        KAGGLE_DATASET,
+        "recommendations.csv",
+        pandas_kwargs=pandas_kwargs,
+    )
+
+    print("Loading games_metadata.json from Kaggle...")
+    # Download dataset to get local path for the JSONL file
+    dataset_path = kagglehub.dataset_download(KAGGLE_DATASET)
+    metadata = []
+    meta_path = os.path.join(dataset_path, 'games_metadata.json')
+    with open(meta_path, 'r', encoding='utf-8') as f:
+        for line in f:
+            if line.strip():
+                metadata.append(json.loads(line))
+    meta_df = pd.DataFrame(metadata)
+
+    print(f"Loaded: {len(games_df)} games, {len(recs_df)} recommendations, {len(meta_df)} metadata entries")
+    return games_df, recs_df, meta_df
+
+
+def multi_hot_encode_tags(meta_df, vocab):
+    """
+    Encodes the tags of each game into a multi-hot numpy array.
+    """
+    tag_to_idx = {tag: idx for idx, tag in enumerate(vocab)}
+    encoded_tags = {}
+    
+    for _, row in meta_df.iterrows():
+        app_id = row['app_id']
+        tags = row['tags']
+        vector = np.zeros(len(vocab), dtype=np.float32)
+        if isinstance(tags, list):
+            for tag in tags:
+                if tag in tag_to_idx:
+                    vector[tag_to_idx[tag]] = 1.0
+        encoded_tags[app_id] = vector
+        
+    return encoded_tags
+
+NON_GAME_TAGS = {
+    'Video Production', 'Photo Editing', 'Audio Production', 'Utilities',
+    'Software Training', 'Game Development', 'Animation & Modeling',
+    'Web Publishing', 'Accounting', 'Design & Illustration'
+}
+
+def is_game(tags):
+    """Filter out software, tools and non-game items based on tags."""
+    if not isinstance(tags, list) or len(tags) == 0:
+        return False
+    if any(t in NON_GAME_TAGS for t in tags):
+        return False
+    return True
+
+def engineer_features(games_df, recs_df, meta_df, vocab):
+    """
+    Creates Item and User features using the tag vocabulary.
+    Only includes actual games (filters out software/tools/soundtracks).
+    """
+    print("Engineering features...")
+    games_df = games_df.copy()
+    games_df['price_norm'] = np.log1p(games_df['price_final']).astype(np.float32)
+
+    # Merge games and metadata to get tags
+    item_features = pd.merge(games_df[['app_id', 'title', 'price_norm']], meta_df[['app_id', 'tags']], on='app_id', how='left')
+
+    # Filter out non-games (software, tools, etc.)
+    print("Filtering non-game items...")
+    initial_count = len(item_features)
+    item_features = item_features[item_features['tags'].apply(is_game)].reset_index(drop=True)
+    print(f"Filtered {initial_count - len(item_features)} non-game items. Remaining: {len(item_features)}")
+
+    # Encode tags
+    encoded_tags = multi_hot_encode_tags(item_features, vocab)
+
+    # Attach multi-hot vectors as a column
+    item_features['tags_vector'] = item_features['app_id'].map(encoded_tags)
+    zero_vec = np.zeros(len(vocab), dtype=np.float32)
+    item_features['tags_vector'] = item_features['tags_vector'].apply(lambda x: x if isinstance(x, np.ndarray) else zero_vec)
+
+    # Filter recommendations to only include valid game app_ids
+    valid_app_ids = set(item_features['app_id'])
+    recs_df = recs_df[recs_df['app_id'].isin(valid_app_ids)].copy()
+
+    # 2. Interactions (Labels)
+    recs_df['label'] = ((recs_df['is_recommended'].astype(str).str.lower() == 'true') | (recs_df['hours'] > 2.0)).astype(int)
+
+    return item_features, recs_df
+
+def prepare_training_data(item_features, recs_df, vocab):
+    """
+    Creates the final dataset joining users, items, and labels using vectorized operations.
+    """
+    print("Preparing training data (vectorized)...")
+    
+    # Get mapping of app_id -> tags_vector
+    app_to_tags = dict(zip(item_features['app_id'], item_features['tags_vector']))
+    zero_vec = np.zeros(len(vocab), dtype=np.float32)
+    
+    # 1. Map games to tag vectors (shape: [num_recs, 50])
+    print("Mapping app_ids to tag vectors...")
+    tags_array = np.stack(recs_df['app_id'].map(lambda x: app_to_tags.get(x, zero_vec)).values)
+    
+    # 2. Multiply tag vectors by playtime hours (shape: [num_recs, 50])
+    hours_array = recs_df['hours'].values.astype(np.float32)
+    weighted_tags = tags_array * hours_array[:, np.newaxis]
+    
+    # 3. Compute user-level aggregates using pandas groupby
+    print("Grouping user features...")
+    temp_df = pd.DataFrame(weighted_tags, columns=[f'tag_{i}' for i in range(len(vocab))])
+    temp_df['user_id'] = recs_df['user_id'].values
+    temp_df['hours'] = hours_array
+    
+    user_sums = temp_df.groupby('user_id').sum()
+    
+    # 4. Extract total hours and log-normalize playtime
+    user_playtimes = np.log1p(user_sums['hours'].values).astype(np.float32)
+    user_playtime_dict = dict(zip(user_sums.index, user_playtimes))
+    
+    # 5. Extract preference matrix and normalize each user's tags to sum to 1
+    tag_cols = [f'tag_{i}' for i in range(len(vocab))]
+    tag_sums = user_sums[tag_cols].values
+    row_sums = tag_sums.sum(axis=1, keepdims=True)
+    # Avoid division by zero
+    row_sums = np.where(row_sums == 0, 1.0, row_sums)
+    normalized_prefs = (tag_sums / row_sums).astype(np.float32)
+    
+    user_profiles = dict(zip(user_sums.index, normalized_prefs))
+    
+    # 6. Build the final training inputs
+    print("Assembling final feature matrices...")
+    # Map back to get user vectors for every recommendation
+    user_pref_mapped = np.stack(recs_df['user_id'].map(lambda uid: user_profiles.get(uid, zero_vec)).values)
+    user_time_mapped = recs_df['user_id'].map(lambda uid: user_playtime_dict.get(uid, 0.0)).values.astype(np.float32)
+    
+    # Map item vectors
+    item_tags_mapped = tags_array
+    # Map price_norm
+    app_to_price = dict(zip(item_features['app_id'], item_features['price_norm']))
+    item_price_mapped = recs_df['app_id'].map(lambda aid: app_to_price.get(aid, 0.0)).values.astype(np.float32)
+    
+    # Concatenate features:
+    # User: [playtime] + [tag_pref] = [51]
+    user_features_matrix = np.concatenate([user_time_mapped[:, np.newaxis], user_pref_mapped], axis=1).astype(np.float32)
+    # Item: [price] + [tags] = [51]
+    item_features_matrix = np.concatenate([item_price_mapped[:, np.newaxis], item_tags_mapped], axis=1).astype(np.float32)
+    
+    # Wrap into a simple dictionary dataframe structure for Keras training compatibility
+    train_df = pd.DataFrame({
+        'user_features': list(user_features_matrix),
+        'item_features': list(item_features_matrix),
+        'label': recs_df['label'].values
+    })
+    
+    user_stats = pd.DataFrame([
+        {
+            'user_id': uid, 
+            'total_playtime_norm': user_playtime_dict[uid], 
+            'tag_preferences': user_profiles[uid]
+        } for uid in user_sums.index
+    ])
+    
+    return train_df, item_features, user_stats
+
+if __name__ == "__main__":
+    g, r, m = load_data(sample_frac=0.01)
+    vocab = get_or_create_tag_vocabulary(m, vocab_size=50)
+    items, recs = engineer_features(g, r, m, vocab)
+    train, items, users = prepare_training_data(items, recs, vocab)
+    print(f"Training data size: {len(train)}")
+    print("Preprocessing completed.")
