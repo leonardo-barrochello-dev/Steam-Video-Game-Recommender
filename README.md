@@ -57,13 +57,17 @@ pip install -r requirements.txt
 
 ### 2. Configure Kaggle API Token
 
-The dataset is downloaded via Kaggle CLI. Set your token as an environment variable:
+The Kaggle CLI needs a token saved in `~/.kaggle/access_token`:
 
 ```powershell
-$env:KAGGLE_API_TOKEN = "your_kaggle_api_token"
+# Create the .kaggle directory
+mkdir ~\.kaggle -Force
+
+# Save your token
+Set-Content ~\.kaggle\access_token "your_kaggle_api_token"
 ```
 
-Get your token at https://www.kaggle.com/settings/api.
+Get your token at https://www.kaggle.com/settings/api (click "Create New API Token").
 
 ### 3. Download Dataset
 

@@ -9,31 +9,28 @@ DATA_DIR = BASE_DIR / "data"
 REQUIRED_FILES = ["games.csv", "recommendations.csv", "users.csv", "games_metadata.json"]
 
 
+KAGGLE_DIR = Path.home() / ".kaggle"
+
+
 def check_credentials():
-    token = os.environ.get("KAGGLE_API_TOKEN")
-    if not token:
-        print(
-            """
-╔══════════════════════════════════════════════════════════╗
-║ Kaggle API token not found                              ║
-╠══════════════════════════════════════════════════════════╣
-║ 1. Go to https://www.kaggle.com/settings/api            ║
-║ 2. Click "Generate New Token" or "Create New API Token" ║
-║ 3. Set the environment variable:                        ║
-║                                                         ║
-║    Windows (PowerShell):                                ║
-║      $env:KAGGLE_API_TOKEN = "seu_token_aqui"           ║
-║                                                         ║
-║    Windows (CMD):                                       ║
-║      set KAGGLE_API_TOKEN=seu_token_aqui                ║
-║                                                         ║
-║    Linux/Mac:                                           ║
-║      export KAGGLE_API_TOKEN="seu_token_aqui"           ║
-╚══════════════════════════════════════════════════════════╝
+    token_file = KAGGLE_DIR / "access_token"
+
+    if token_file.exists():
+        print("Kaggle credentials found")
+        return
+
+    print(
+        f"""
+Kaggle access_token not found at: {token_file}
+
+Steps:
+1. Go to https://www.kaggle.com/settings/api
+2. Click "Generate New Token" or "Create New API Token"
+3. Save the generated token in:
+   {token_file}
 """
-        )
-        sys.exit(1)
-    print("Kaggle API token found")
+    )
+    sys.exit(1)
 
 
 def download_files():
