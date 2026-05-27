@@ -5,14 +5,14 @@ import tensorflow as tf
 from model import build_and_compile_model
 import json
 import os
-import kagglehub
 
 app = FastAPI(title="Steam Recommender ML API")
 
-KAGGLE_DATASET = "antonkozyriev/game-recommendations-on-steam"
+ML_DIR = os.path.dirname(__file__)
+DATA_DIR = os.path.join(os.path.dirname(__file__), '..', 'data')
 
 # --- Startup Data Loading & Caching ---
-vocab_path = os.path.join(os.path.dirname(__file__), 'tag_vocabulary.json')
+vocab_path = os.path.join(ML_DIR, 'tag_vocabulary.json')
 
 # Load Vocabulary
 if not os.path.exists(vocab_path):
@@ -22,10 +22,9 @@ with open(vocab_path, 'r', encoding='utf-8') as f:
     vocab = json.load(f)
 tag_to_idx = {tag: idx for idx, tag in enumerate(vocab)}
 
-# Load Game Metadata from Kaggle Hub (uses local cache after first download)
+# Load Game Metadata from local data/ directory
 print("Caching game tag vectors for real-time inference...")
-dataset_path = kagglehub.dataset_download(KAGGLE_DATASET)
-meta_path = os.path.join(dataset_path, 'games_metadata.json')
+meta_path = os.path.join(DATA_DIR, 'games_metadata.json')
 
 app_tags = {}
 if os.path.exists(meta_path):
@@ -49,7 +48,7 @@ model = build_and_compile_model()
 # Call model with dummy inputs (51 features) to build graph
 _ = model({'user_features': tf.zeros((1, 51)), 'item_features': tf.zeros((1, 51))})
 
-weights_path = os.path.join(os.path.dirname(__file__), 'two_tower_weights.weights.h5')
+weights_path = os.path.join(ML_DIR, 'two_tower_weights.weights.h5')
 if os.path.exists(weights_path):
     model.load_weights(weights_path)
     print("Successfully loaded trained model weights.")

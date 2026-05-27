@@ -4,11 +4,9 @@ import os
 import numpy as np
 from collections import Counter
 
-import kagglehub
-from kagglehub import KaggleDatasetAdapter
-
 ML_DIR = os.path.dirname(__file__)
-KAGGLE_DATASET = "antonkozyriev/game-recommendations-on-steam"
+DATA_DIR = os.path.join(os.path.dirname(__file__), '..', 'data')
+
 
 def get_or_create_tag_vocabulary(meta_df, vocab_size=50):
     """
@@ -36,38 +34,28 @@ def get_or_create_tag_vocabulary(meta_df, vocab_size=50):
     print(f"Generated and saved tag vocabulary of size {len(most_common)}")
     return most_common
 
+
 def load_data(sample_frac=1.0):
     """
-    Loads datasets from Kaggle Hub (downloads and caches locally on first run).
-    Subsequent runs use the local cache — no re-download needed.
+    Loads datasets from local data/ directory.
     """
-    print("Loading games.csv from Kaggle...")
-    games_df = kagglehub.load_dataset(
-        KaggleDatasetAdapter.PANDAS,
-        KAGGLE_DATASET,
-        "games.csv",
-    )
+    print("Loading games.csv from local data/...")
+    games_df = pd.read_csv(os.path.join(DATA_DIR, "games.csv"))
 
-    print(f"Loading recommendations.csv from Kaggle (sample_frac={sample_frac})...")
-    # For large files, use nrows to limit how much we read from disk if sample_frac < 1
-    # recommendations.csv has ~41M rows — we approximate with nrows for speed
+    print(f"Loading recommendations.csv from local data/ (sample_frac={sample_frac})...")
     TOTAL_REC_ROWS = 41_000_000
-    pandas_kwargs = {}
+    nrows = None
     if sample_frac < 1.0:
-        pandas_kwargs['nrows'] = max(1000, int(TOTAL_REC_ROWS * sample_frac))
+        nrows = max(1000, int(TOTAL_REC_ROWS * sample_frac))
 
-    recs_df = kagglehub.load_dataset(
-        KaggleDatasetAdapter.PANDAS,
-        KAGGLE_DATASET,
-        "recommendations.csv",
-        pandas_kwargs=pandas_kwargs,
+    recs_df = pd.read_csv(
+        os.path.join(DATA_DIR, "recommendations.csv"),
+        nrows=nrows,
     )
 
-    print("Loading games_metadata.json from Kaggle...")
-    # Download dataset to get local path for the JSONL file
-    dataset_path = kagglehub.dataset_download(KAGGLE_DATASET)
+    print("Loading games_metadata.json from local data/...")
     metadata = []
-    meta_path = os.path.join(dataset_path, 'games_metadata.json')
+    meta_path = os.path.join(DATA_DIR, 'games_metadata.json')
     with open(meta_path, 'r', encoding='utf-8') as f:
         for line in f:
             if line.strip():
