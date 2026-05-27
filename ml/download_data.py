@@ -1,4 +1,4 @@
-import os
+import zipfile
 import subprocess
 import sys
 from pathlib import Path
@@ -7,7 +7,6 @@ DATASET = "antonkozyriev/game-recommendations-on-steam"
 BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = BASE_DIR / "data"
 REQUIRED_FILES = ["games.csv", "recommendations.csv", "users.csv", "games_metadata.json"]
-
 
 KAGGLE_DIR = Path.home() / ".kaggle"
 
@@ -33,50 +32,46 @@ Steps:
     sys.exit(1)
 
 
-def download_files():
+def download_dataset():
     DATA_DIR.mkdir(parents=True, exist_ok=True)
 
-    for file in REQUIRED_FILES:
-        file_path = DATA_DIR / file
-        if file_path.exists():
-            size_mb = file_path.stat().st_size / 1_000_000
-            print(f"  {file} already exists ({size_mb:.1f} MB), skipping")
-            continue
+    if all((DATA_DIR / f).exists() for f in REQUIRED_FILES):
+        print("Dataset already downloaded")
+        return
 
-        print(f"Downloading {file}...")
-        result = subprocess.run(
-            [
-                sys.executable,
-                "-m",
-                "kaggle",
-                "datasets",
-                "download",
-                "-d",
-                DATASET,
-                "-p",
-                str(DATA_DIR),
-                "-f",
-                file,
-            ],
-            capture_output=True,
-            text=True,
-        )
+    print("Downloading dataset from Kaggle...")
+    subprocess.run(
+        [
+            "kaggle",
+            "datasets",
+            "download",
+            "-d",
+            DATASET,
+            "-p",
+            str(DATA_DIR),
+        ],
+        check=True,
+    )
 
-        if result.returncode != 0:
-            print(f"Error downloading {file}: {result.stderr}")
-            sys.exit(1)
+    zip_files = list(DATA_DIR.glob("*.zip"))
+    if not zip_files:
+        print("No zip file found, assuming files already extracted")
+        return
 
-        size_mb = file_path.stat().st_size / 1_000_000
-        print(f"  Downloaded {file} ({size_mb:.1f} MB)")
+    for zip_file in zip_files:
+        with zipfile.ZipFile(zip_file) as z:
+            z.extractall(DATA_DIR)
+        zip_file.unlink()
+        print(f"Extracted {zip_file.name}")
 
-    print("\nAll files downloaded successfully!")
+    print("Dataset downloaded and extracted successfully")
 
 
 def validate_files():
     missing = [f for f in REQUIRED_FILES if not (DATA_DIR / f).exists()]
 
     if missing:
-        print(f"Missing files after download: {missing}")
+        print(f"Missing files: {missing}")
         sys.exit(1)
 
     print("Files in data/:")
@@ -88,7 +83,7 @@ def validate_files():
 def main():
     print("\n=== Steam Dataset Download ===\n")
     check_credentials()
-    download_files()
+    download_dataset()
     validate_files()
     print("\nDone! Run 'python ml/train.py' to train the model.\n")
 
