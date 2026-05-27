@@ -9,24 +9,23 @@ DATA_DIR = BASE_DIR / "data"
 REQUIRED_FILES = ["games.csv", "recommendations.csv", "users.csv", "games_metadata.json"]
 
 KAGGLE_DIR = Path.home() / ".kaggle"
+KAGGLE_JSON = KAGGLE_DIR / "kaggle.json"
 
 
 def check_credentials():
-    token_file = KAGGLE_DIR / "access_token"
-
-    if token_file.exists():
+    if KAGGLE_JSON.exists():
         print("Kaggle credentials found")
         return
 
     print(
         f"""
-Kaggle access_token not found at: {token_file}
+Kaggle credentials not found at: {KAGGLE_JSON}
 
 Steps:
 1. Go to https://www.kaggle.com/settings/api
-2. Click "Generate New Token" or "Create New API Token"
-3. Save the generated token in:
-   {token_file}
+2. Under "Legacy API Credentials", click "Create Legacy API Key"
+3. Move the downloaded kaggle.json to:
+   {KAGGLE_JSON}
 """
     )
     sys.exit(1)
