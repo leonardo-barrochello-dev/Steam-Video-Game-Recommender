@@ -34,14 +34,9 @@ User Request:
 
 ## Dataset
 
-Place the dataset files in `data/`:
+The dataset is downloaded automatically via Kaggle CLI — see [Setup](#3-download-dataset).
 
-- `games.csv` (~50k games)
-- `recommendations.csv` (~41M reviews)
-- `users.csv` (~14M users)
-- `games_metadata.json` (~50k entries with tags)
-
-Download from [Game Recommendations on Steam on Kaggle](https://www.kaggle.com/datasets/antonkozyriev/game-recommendations-on-steam).
+Files: `games.csv` (~50k games), `recommendations.csv` (~41M reviews), `users.csv` (~14M users), `games_metadata.json` (~50k entries with tags).
 
 ## Setup
 
@@ -60,7 +55,23 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
-### 2. Configure Steam API Key
+### 2. Configure Kaggle API Token
+
+The dataset is downloaded via Kaggle CLI. Set your token as an environment variable:
+
+```powershell
+$env:KAGGLE_API_TOKEN = "your_kaggle_api_token"
+```
+
+Get your token at https://www.kaggle.com/settings/api.
+
+### 3. Download Dataset
+
+```bash
+python ml/download_data.py
+```
+
+### 4. Configure Steam API Key
 
 Set the key in `api/SteamRecommenderAPI/appsettings.json`:
 
@@ -72,7 +83,7 @@ Set the key in `api/SteamRecommenderAPI/appsettings.json`:
 
 Or use environment variable / `appsettings.Development.json`.
 
-### 3. Train the Model
+### 5. Train the Model
 
 ```bash
 cd ml
@@ -81,7 +92,7 @@ python train.py
 
 This loads data from `data/`, trains the Two-Tower model, and saves weights to `two_tower_weights.weights.h5`.
 
-### 4. Generate Item Embeddings
+### 6. Generate Item Embeddings
 
 ```bash
 cd ml
@@ -90,7 +101,7 @@ python generate_embeddings.py
 
 Extracts item embeddings from the trained model and stores them in `database/recommender.db`.
 
-### 5. Start the ML Server
+### 7. Start the ML Server
 
 ```bash
 cd ml
@@ -99,7 +110,7 @@ python server.py
 
 Starts a FastAPI server on port 5000 for real-time user embedding generation.
 
-### 6. Start the C# API
+### 8. Start the C# API
 
 ```bash
 cd api/SteamRecommenderAPI
@@ -142,6 +153,7 @@ python collect_steam_data.py <steam_id>
 │   ├── generate_embeddings.py   # Item embeddings → SQLite
 │   ├── server.py                # FastAPI inference server
 │   ├── collect_steam_data.py    # Steam API data collection
+│   ├── download_data.py         # Dataset download from Kaggle
 │   └── requirements.txt
 ├── api/SteamRecommenderAPI/     # C# Web API
 │   ├── Controllers/
