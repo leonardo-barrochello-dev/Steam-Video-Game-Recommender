@@ -26,7 +26,7 @@ def generate_and_save_item_embeddings():
     print("Loading model weights...")
     model = build_and_compile_model()
     # Call model on dummy inputs of shape (1, 51) to build the weights/layers
-    _ = model({'user_features': tf.zeros((1, 51)), 'item_features': tf.zeros((1, 51))})
+    _ = model([tf.zeros((1, 51)), tf.zeros((1, 51))])
     
     weights_path = os.path.join(os.path.dirname(__file__), 'two_tower_weights.weights.h5')
     if os.path.exists(weights_path):
@@ -38,7 +38,7 @@ def generate_and_save_item_embeddings():
     # Create the item tower independently or use model.item_tower
     print("Generating item embeddings...")
     # tf.function for speed if dealing with batches, but here direct call
-    item_embeddings = model.item_tower(item_input_features).numpy()
+    item_embeddings = model.get_layer('item_tower')(item_input_features).numpy()
     
     # Connect to SQLite and save
     db_path = os.path.join(os.path.dirname(__file__), '..', 'database', 'recommender.db')

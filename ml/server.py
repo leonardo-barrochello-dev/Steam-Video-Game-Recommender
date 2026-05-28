@@ -46,7 +46,7 @@ print(f"Cached {len(app_tags)} games' tag vectors.")
 # --- Model Instantiation & Build ---
 model = build_and_compile_model()
 # Call model with dummy inputs (51 features) to build graph
-_ = model({'user_features': tf.zeros((1, 51)), 'item_features': tf.zeros((1, 51))})
+_ = model([tf.zeros((1, 51)), tf.zeros((1, 51))])
 
 weights_path = os.path.join(ML_DIR, 'two_tower_weights.weights.h5')
 if os.path.exists(weights_path):
@@ -90,7 +90,7 @@ def embed_user(request: EmbeddingRequest):
         
         # Pass to the User Tower
         input_tensor = tf.constant([user_features], dtype=tf.float32)
-        user_embedding = model.user_tower(input_tensor)
+        user_embedding = model.get_layer('user_tower')(input_tensor)
         
         # Return embedding vector as list of floats
         return {"user_embedding": user_embedding.numpy()[0].tolist()}

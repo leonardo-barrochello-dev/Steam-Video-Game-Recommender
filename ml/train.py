@@ -34,13 +34,12 @@ def train_model():
     # Fit the model
     print("Training model...")
     model.fit(
-        x={"user_features": user_inputs, "item_features": item_inputs},
+        x=[user_inputs, item_inputs],
         y=labels,
         epochs=15,
         batch_size=1024,
         validation_split=0.1,
     )
-
     # Save the trained weights
     weights_path = os.path.join(
         os.path.dirname(__file__), "two_tower_weights.weights.h5"

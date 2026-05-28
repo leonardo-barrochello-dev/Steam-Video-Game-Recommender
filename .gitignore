@@ -30,6 +30,9 @@ Thumbs.db
 # Database (generated)
 database/recommender.db
 
+# Agent prompts (not part of the project)
+AGENT.MD
+
 # API Keys - use environment variables or appsettings.Development.json
 appsettings.Development.json
 *.user
