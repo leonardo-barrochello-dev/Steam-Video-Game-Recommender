@@ -1,6 +1,6 @@
 # Steam Video Game Recommender
 
-A personalized game recommendation system built with a Two-Tower neural network (TensorFlow), served via a C# .NET Web API with real-time Steam API integration.
+A personalized game recommendation system built with a Two-Tower neural network (TensorFlow), served via a C# .NET Web API with real-time Steam API integration and Qdrant for fast ANN vector search.
 
 ## Architecture
 
@@ -9,17 +9,15 @@ data/*.csv ──> preprocess.py ──> train.py ──> two_tower_weights.weig
                (load & feature      (train model)
                 engineer)
 
-two_tower_weights.weights.h5 ──> generate_embeddings.py ──> database/recommender.db
-                                (extract item embeddings via Item Tower)
+two_tower_weights.weights.h5 ──> generate_embeddings.py ──> Qdrant (ANN search)
+                                (extract item embeddings     vector + payload {app_id, name, genres}
+                                 via Item Tower)
 
 User Request:
   C# API (GET /recommend?steam_id=XXX)
     ├── SteamApiService: gets user's owned games from Steam API
-    ├── EmbeddingService: POSTs owned_games to Python FastAPI
-    │     └── server.py: constructs user features, runs User Tower
-    │                     returns user_embedding
-    ├── RecommendationService: dot-product user_embedding vs all game_embeddings
-    │                          from SQLite, exclude owned, sort by score
+    ├── RecommendService: POSTs owned_games to Python FastAPI
+    │     └── /recommend endpoint: User Tower → Qdrant search → filter owned → Top N
     └── Returns Top-N recommendations as JSON
 ```
 
@@ -29,8 +27,8 @@ User Request:
 |-----------|-------|----------|
 | **ML Training** | Python, TensorFlow | `ml/` |
 | **ML Inference** | Python, FastAPI | `ml/server.py` |
+| **Vector Search** | Qdrant (Docker) | `docker-compose.yml` / `ml/qdrant_manager.py` |
 | **Web API** | C#, ASP.NET Core | `api/SteamRecommenderAPI/` |
-| **Database** | SQLite | `database/recommender.db` |
 
 ## Dataset
 
@@ -43,6 +41,7 @@ Files: `games.csv` (~50k games), `recommendations.csv` (~41M reviews), `users.cs
 ### Prerequisites
 - Python 3.10+
 - .NET 10 SDK
+- Docker (for Qdrant)
 - Steam API key ([get one here](https://steamcommunity.com/dev/apikey))
 
 ### 1. Python ML Environment
@@ -73,7 +72,15 @@ mkdir ~\.kaggle -Force
 python ml/download_data.py
 ```
 
-### 4. Configure Steam API Key
+### 4. Start Qdrant
+
+```bash
+docker compose up -d
+```
+
+Qdrant runs on `localhost:6333` and stores data in `./qdrant_storage/`.
+
+### 5. Configure Steam API Key
 
 Set the key in `api/SteamRecommenderAPI/appsettings.json`:
 
@@ -85,7 +92,7 @@ Set the key in `api/SteamRecommenderAPI/appsettings.json`:
 
 Or use environment variable / `appsettings.Development.json`.
 
-### 5. Train the Model
+### 6. Train the Model
 
 ```bash
 cd ml
@@ -94,25 +101,27 @@ python train.py
 
 This loads data from `data/`, trains the Two-Tower model, and saves weights to `two_tower_weights.weights.h5`.
 
-### 6. Generate Item Embeddings
+### 7. Generate Item Embeddings & Upload to Qdrant
 
 ```bash
 cd ml
 python generate_embeddings.py
 ```
 
-Extracts item embeddings from the trained model and stores them in `database/recommender.db`.
+Extracts item embeddings via the Item Tower and uploads them to Qdrant with metadata payload (`app_id`, `name`, `genres`).
 
-### 7. Start the ML Server
+### 8. Start the ML Server
 
 ```bash
 cd ml
 python server.py
 ```
 
-Starts a FastAPI server on port 5000 for real-time user embedding generation.
+Starts a FastAPI server on port 5000 with endpoints:
+- `POST /embed-user` — legacy user embedding generation
+- `POST /recommend` — User Tower → Qdrant search → filter owned → Top recommendations
 
-### 8. Start the C# API
+### 9. Start the C# API
 
 ```bash
 cd api/SteamRecommenderAPI
@@ -148,22 +157,26 @@ python collect_steam_data.py <steam_id>
 ## Project Structure
 
 ```
-├── ml/                          # Python ML Service
-│   ├── preprocess.py            # Data loading & feature engineering
-│   ├── model.py                 # Two-Tower architecture
-│   ├── train.py                 # Training pipeline
-│   ├── generate_embeddings.py   # Item embeddings → SQLite
-│   ├── server.py                # FastAPI inference server
-│   ├── collect_steam_data.py    # Steam API data collection
-│   ├── download_data.py         # Dataset download from Kaggle
+├── docker-compose.yml            # Qdrant container
+├── ml/                           # Python ML Service
+│   ├── preprocess.py             # Data loading & feature engineering
+│   ├── model.py                  # Two-Tower architecture
+│   ├── train.py                  # Training pipeline
+│   ├── generate_embeddings.py    # Item embeddings → Qdrant
+│   ├── server.py                 # FastAPI inference server
+│   ├── qdrant_manager.py         # Qdrant client wrapper
+│   ├── collect_steam_data.py     # Steam API data collection
+│   ├── download_data.py          # Dataset download from Kaggle
 │   └── requirements.txt
-├── api/SteamRecommenderAPI/     # C# Web API
+├── api/SteamRecommenderAPI/      # C# Web API
 │   ├── Controllers/
+│   │   └── RecommendController.cs
 │   ├── Services/
+│   │   ├── RecommendService.cs   # Calls /recommend on ML API
+│   │   ├── SteamApiService.cs
+│   │   └── EmbeddingService.cs   # Legacy (unused)
 │   └── Program.cs
-├── database/
-│   └── schema.sql
-└── data/                        # Dataset files (CSVs + JSON)
+└── data/                         # Dataset files (CSVs + JSON)
 ```
 
 ## Model Architecture
@@ -174,8 +187,18 @@ The Two-Tower model learns 32-dimensional embeddings for users and items:
 - **Item Tower**: `[price + 50 tag features]` → Dense(256) → Dense(128) → Dense(32) → L2 normalize
 - **Output**: Dot product → Sigmoid → Binary cross-entropy loss
 
+## Qdrant Collection
+
+At startup, `generate_embeddings.py` creates a Qdrant collection named `games`:
+
+| Property | Value |
+|----------|-------|
+| Vector size | 32 (matching embedding_dim) |
+| Distance metric | Cosine |
+| Payload | `app_id` (int), `name` (str), `genres` (str) |
+
 ## Notes
 
 - `data/` directory contains the dataset files (CSVs + JSONL) required for training.
-- `database/recommender.db` is generated by `generate_embeddings.py`.
 - Model weights (`*.h5`) are generated artifacts and not tracked in git.
+- Qdrant storage (`qdrant_storage/`) is excluded from git.

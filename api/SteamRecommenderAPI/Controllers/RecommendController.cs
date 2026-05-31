@@ -8,17 +8,14 @@ namespace SteamRecommenderAPI.Controllers;
 public class RecommendController : ControllerBase
 {
     private readonly SteamApiService _steamApiService;
-    private readonly EmbeddingService _embeddingService;
-    private readonly RecommendationService _recommendationService;
+    private readonly RecommendService _recommendService;
 
     public RecommendController(
-        SteamApiService steamApiService, 
-        EmbeddingService embeddingService, 
-        RecommendationService recommendationService)
+        SteamApiService steamApiService,
+        RecommendService recommendService)
     {
         _steamApiService = steamApiService;
-        _embeddingService = embeddingService;
-        _recommendationService = recommendationService;
+        _recommendService = recommendService;
     }
 
     [HttpGet]
@@ -31,16 +28,12 @@ public class RecommendController : ControllerBase
         {
             // 1. Fetch user data from Steam API
             var userGames = await _steamApiService.GetUserGamesAsync(steam_id);
-            var ownedAppIds = userGames.Select(g => g.AppId).ToList();
 
-            // 2. Generate User Embedding from ML API (sending raw owned games)
-            var userEmbedding = await _embeddingService.GetUserEmbeddingAsync(userGames);
+            if (userGames == null || !userGames.Any())
+                return StatusCode(500, "No games found for this Steam ID.");
 
-            if (userEmbedding == null || !userEmbedding.Any())
-                return StatusCode(500, "Failed to generate user embedding.");
-
-            // 4. Calculate Recommendations
-            var recommendations = await _recommendationService.GetRecommendationsAsync(userEmbedding, ownedAppIds ,20);
+            // 2. Get recommendations from Python ML API (embedding + Qdrant + filter)
+            var recommendations = await _recommendService.GetRecommendationsAsync(userGames, topK: 10);
 
             return Ok(recommendations);
         }

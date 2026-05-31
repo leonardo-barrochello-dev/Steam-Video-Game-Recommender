@@ -6,3 +6,4 @@ fastapi
 uvicorn
 requests
 kaggle
+qdrant-client

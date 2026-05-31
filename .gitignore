@@ -27,8 +27,8 @@ Thumbs.db
 # Generated model weights
 *.h5
 
-# Database (generated)
-database/recommender.db
+# Qdrant storage (Docker volume)
+qdrant_storage/
 
 # Agent prompts (not part of the project)
 AGENT.MD
