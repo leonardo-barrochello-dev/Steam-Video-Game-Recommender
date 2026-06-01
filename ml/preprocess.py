@@ -134,79 +134,148 @@ def engineer_features(games_df, recs_df, meta_df, vocab):
 
     return item_features, recs_df
 
-def prepare_training_data(item_features, recs_df, vocab):
-    """
-    Creates the final dataset joining users, items, and labels using vectorized operations.
-    """
+def prepare_training_data(item_features, recs_df, vocab, neg_samples_per_pos=1, random_seed=42):
     print("Preparing training data (vectorized)...")
-    
-    # Get mapping of app_id -> tags_vector
+    np.random.seed(random_seed)
+
     app_to_tags = dict(zip(item_features['app_id'], item_features['tags_vector']))
     zero_vec = np.zeros(len(vocab), dtype=np.float32)
-    
-    # 1. Map games to tag vectors (shape: [num_recs, 50])
+
     print("Mapping app_ids to tag vectors...")
     tags_array = np.stack(recs_df['app_id'].map(lambda x: app_to_tags.get(x, zero_vec)).values)
-    
-    # 2. Multiply tag vectors by playtime hours (shape: [num_recs, 50])
+
     hours_array = recs_df['hours'].values.astype(np.float32)
     weighted_tags = tags_array * hours_array[:, np.newaxis]
-    
-    # 3. Compute user-level aggregates using pandas groupby
+
     print("Grouping user features...")
     temp_df = pd.DataFrame(weighted_tags, columns=[f'tag_{i}' for i in range(len(vocab))])
     temp_df['user_id'] = recs_df['user_id'].values
     temp_df['hours'] = hours_array
-    
+
     user_sums = temp_df.groupby('user_id').sum()
-    
-    # 4. Extract total hours and log-normalize playtime
+
+    # Per-user playtime stats
     user_playtimes = np.log1p(user_sums['hours'].values).astype(np.float32)
     user_playtime_dict = dict(zip(user_sums.index, user_playtimes))
-    
-    # 5. Extract preference matrix and normalize each user's tags to sum to 1
+
+    # Normalized tag preferences
     tag_cols = [f'tag_{i}' for i in range(len(vocab))]
     tag_sums = user_sums[tag_cols].values
     row_sums = tag_sums.sum(axis=1, keepdims=True)
-    # Avoid division by zero
     row_sums = np.where(row_sums == 0, 1.0, row_sums)
     normalized_prefs = (tag_sums / row_sums).astype(np.float32)
-    
+
     user_profiles = dict(zip(user_sums.index, normalized_prefs))
-    
-    # 6. Build the final training inputs
+
+    # Per-user: games owned, avg playtime, unique genres
+    user_game_counts = recs_df.groupby('user_id')['app_id'].nunique()
+    user_game_count_dict = dict(zip(user_game_counts.index, np.log1p(user_game_counts.values).astype(np.float32)))
+
+    user_avg_playtime = (user_sums['hours'].values / user_game_counts.values.astype(np.float32))
+    user_avg_playtime = np.where(user_game_counts.values == 0, 0.0, user_avg_playtime)
+    user_avg_playtime_dict = dict(zip(user_sums.index, np.log1p(user_avg_playtime).astype(np.float32)))
+
+    user_unique_genres = (tag_sums > 0).sum(axis=1).astype(np.float32)
+    user_unique_genres_dict = dict(zip(user_sums.index, np.log1p(user_unique_genres).astype(np.float32)))
+
     print("Assembling final feature matrices...")
-    # Map back to get user vectors for every recommendation
     user_pref_mapped = np.stack(recs_df['user_id'].map(lambda uid: user_profiles.get(uid, zero_vec)).values)
     user_time_mapped = recs_df['user_id'].map(lambda uid: user_playtime_dict.get(uid, 0.0)).values.astype(np.float32)
-    
-    # Map item vectors
+
     item_tags_mapped = tags_array
-    # Map price_norm
     app_to_price = dict(zip(item_features['app_id'], item_features['price_norm']))
     item_price_mapped = recs_df['app_id'].map(lambda aid: app_to_price.get(aid, 0.0)).values.astype(np.float32)
-    
-    # Concatenate features:
-    # User: [playtime] + [tag_pref] = [51]
-    user_features_matrix = np.concatenate([user_time_mapped[:, np.newaxis], user_pref_mapped], axis=1).astype(np.float32)
-    # Item: [price] + [tags] = [51]
+
+    original_labels = recs_df['label'].values
+
+    # Build extended user features: [playtime, owned, avg_pt, unique_tags, tag_prefs]
+    def build_user_feat(uid):
+        pref = user_profiles.get(uid, zero_vec)
+        ut = user_time if 'user_time' in dir() else 0.0
+        gc = user_game_count_dict.get(uid, 0.0)
+        ap = user_avg_playtime_dict.get(uid, 0.0)
+        ug = user_unique_genres_dict.get(uid, 0.0)
+        pt = user_playtime_dict.get(uid, 0.0)
+        return np.concatenate([[pt, gc, ap, ug], pref]).astype(np.float32)
+
+    user_ids_arr = recs_df['user_id'].values
+    user_feat_list = []
+    for uid in user_ids_arr:
+        pref = user_profiles.get(uid, zero_vec)
+        pt = user_playtime_dict.get(uid, 0.0)
+        gc = user_game_count_dict.get(uid, 0.0)
+        ap = user_avg_playtime_dict.get(uid, 0.0)
+        ug = user_unique_genres_dict.get(uid, 0.0)
+        user_feat_list.append(np.concatenate([[pt, gc, ap, ug], pref]))
+    user_features_matrix = np.stack(user_feat_list).astype(np.float32)
+
     item_features_matrix = np.concatenate([item_price_mapped[:, np.newaxis], item_tags_mapped], axis=1).astype(np.float32)
-    
-    # Wrap into a simple dictionary dataframe structure for Keras training compatibility
+
+    # Negative sampling
+    if neg_samples_per_pos > 0:
+        print(f"Generating synthetic negatives (neg_samples_per_pos={neg_samples_per_pos})...")
+        pos_mask = original_labels == 1
+        n_pos = int(pos_mask.sum())
+        n_negatives = n_pos * neg_samples_per_pos
+
+        all_app_ids = np.array(sorted(app_to_tags.keys()))
+        pos_user_ids = recs_df['user_id'].values[pos_mask]
+        sampled_user_ids = np.random.choice(pos_user_ids, size=n_negatives, replace=True)
+        sampled_app_ids = np.random.choice(all_app_ids, size=n_negatives, replace=True)
+
+        neg_user_feats = []
+        neg_item_feats = []
+
+        unique_users = set(sampled_user_ids)
+        user_feat_cache = {}
+        for uid in unique_users:
+            pref = user_profiles.get(uid, zero_vec)
+            pt = user_playtime_dict.get(uid, 0.0)
+            gc = user_game_count_dict.get(uid, 0.0)
+            ap = user_avg_playtime_dict.get(uid, 0.0)
+            ug = user_unique_genres_dict.get(uid, 0.0)
+            user_feat_cache[uid] = np.concatenate([[pt, gc, ap, ug], pref]).astype(np.float32)
+
+        unique_items = set(sampled_app_ids)
+        item_feat_cache = {}
+        for aid in unique_items:
+            vec = app_to_tags.get(aid, zero_vec)
+            price = app_to_price.get(aid, 0.0)
+            item_feat_cache[aid] = np.concatenate([[price], vec]).astype(np.float32)
+
+        for uid, aid in zip(sampled_user_ids, sampled_app_ids):
+            neg_user_feats.append(user_feat_cache[uid])
+            neg_item_feats.append(item_feat_cache[aid])
+
+        synth_user_matrix = np.stack(neg_user_feats)
+        synth_item_matrix = np.stack(neg_item_feats)
+        synth_labels = np.zeros(n_negatives, dtype=np.float32)
+
+        print(f"  Added {n_negatives} synthetic negatives.")
+
+        user_features_matrix = np.concatenate([user_features_matrix, synth_user_matrix], axis=0)
+        item_features_matrix = np.concatenate([item_features_matrix, synth_item_matrix], axis=0)
+        all_labels = np.concatenate([original_labels, synth_labels], axis=0)
+    else:
+        all_labels = original_labels
+
     train_df = pd.DataFrame({
         'user_features': list(user_features_matrix),
         'item_features': list(item_features_matrix),
-        'label': recs_df['label'].values
+        'label': all_labels
     })
-    
+
     user_stats = pd.DataFrame([
         {
-            'user_id': uid, 
-            'total_playtime_norm': user_playtime_dict[uid], 
+            'user_id': uid,
+            'total_playtime_norm': user_playtime_dict[uid],
+            'game_count_norm': user_game_count_dict.get(uid, 0.0),
+            'avg_playtime_norm': user_avg_playtime_dict.get(uid, 0.0),
+            'unique_genres_norm': user_unique_genres_dict.get(uid, 0.0),
             'tag_preferences': user_profiles[uid]
         } for uid in user_sums.index
     ])
-    
+
     return train_df, item_features, user_stats
 
 if __name__ == "__main__":

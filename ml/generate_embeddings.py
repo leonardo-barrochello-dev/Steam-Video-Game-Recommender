@@ -2,7 +2,7 @@ import os
 import json
 import numpy as np
 import tensorflow as tf
-from model import build_and_compile_model
+from model import build_and_compile_model, USER_FEATURE_DIM, ITEM_FEATURE_DIM
 from preprocess import load_data, engineer_features, get_or_create_tag_vocabulary
 from qdrant_manager import QdrantManager
 
@@ -25,7 +25,7 @@ def generate_and_save_item_embeddings():
 
     print("Loading model weights...")
     model = build_and_compile_model()
-    _ = model([tf.zeros((1, 51)), tf.zeros((1, 51))])
+    _ = model([tf.zeros((1, USER_FEATURE_DIM)), tf.zeros((1, ITEM_FEATURE_DIM))])
 
     weights_path = os.path.join(ML_DIR, 'two_tower_weights.weights.h5')
     if os.path.exists(weights_path):
@@ -37,7 +37,6 @@ def generate_and_save_item_embeddings():
     print("Generating item embeddings...")
     item_embeddings = model.get_layer('item_tower')(item_input_features).numpy()
 
-    # Upload to Qdrant (vector database + metadata payload)
     print("Uploading embeddings to Qdrant...")
     qdrant = QdrantManager()
     qdrant.create_collection()

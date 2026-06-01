@@ -11,7 +11,7 @@ import numpy as np
 QDRANT_HOST = "localhost"
 QDRANT_PORT = 6333
 COLLECTION_NAME = "games"
-VECTOR_SIZE = 32  # matching embedding_dim from model
+VECTOR_SIZE = 128  # matching embedding_dim from model
 
 
 class QdrantManager:
@@ -34,23 +34,27 @@ class QdrantManager:
         )
         print(f"Created collection '{COLLECTION_NAME}' (size={VECTOR_SIZE})")
 
-    def upsert_many(self, embeddings: np.ndarray, payloads: list[dict]):
-        points = [
-            PointStruct(id=i, vector=embeddings[i].tolist(), payload=payloads[i])
-            for i in range(len(embeddings))
-        ]
-        self.client.upsert(
-            collection_name=COLLECTION_NAME,
-            points=points,
-        )
-        print(f"Upserted {len(points)} points to Qdrant.")
+    def upsert_many(self, embeddings: np.ndarray, payloads: list[dict], batch_size=500):
+        total = len(embeddings)
+        for start in range(0, total, batch_size):
+            end = min(start + batch_size, total)
+            points = [
+                PointStruct(id=i, vector=embeddings[i].tolist(), payload=payloads[i])
+                for i in range(start, end)
+            ]
+            self.client.upsert(
+                collection_name=COLLECTION_NAME,
+                points=points,
+            )
+            print(f"  Uploaded {end}/{total}...")
+        print(f"Done. {total} points upserted to Qdrant.")
 
     def search(
         self, query_vector: np.ndarray, top_k: int = 100
     ) -> list[dict]:
-        hits = self.client.search(
+        response = self.client.query_points(
             collection_name=COLLECTION_NAME,
-            query_vector=query_vector.tolist(),
+            query=query_vector.tolist(),
             limit=top_k,
         )
         return [
@@ -59,7 +63,7 @@ class QdrantManager:
                 "name": hit.payload.get("name", ""),
                 "score": hit.score,
             }
-            for hit in hits
+            for hit in response.points
         ]
 
     def collection_exists(self) -> bool:

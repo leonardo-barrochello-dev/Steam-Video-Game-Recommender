@@ -9,7 +9,7 @@ def train_model():
 
     # Load a smaller fraction of the dataset to train quickly and avoid memory limit (recommendations.csv is 2GB)
     # You can increase this fraction if you have enough RAM/GPU power.
-    sample_fraction = 0.1
+    sample_fraction = 0.4
     print(f"Loading data (using {sample_fraction*100}% sample)...")
 
     import numpy as np
@@ -29,18 +29,33 @@ def train_model():
     labels = train_df["label"].values.astype("float32").reshape(-1, 1)
 
     print("Building and compiling Two-Tower Model...")
-    model = build_and_compile_model(embedding_dim=32, learning_rate=0.001)
+    model = build_and_compile_model(learning_rate=0.001)
 
-    # Fit the model
+    callbacks = [
+        tf.keras.callbacks.EarlyStopping(
+            monitor='val_loss',
+            patience=5,
+            restore_best_weights=True,
+            verbose=1,
+        ),
+        tf.keras.callbacks.ReduceLROnPlateau(
+            monitor='val_loss',
+            factor=0.5,
+            patience=3,
+            min_lr=1e-6,
+            verbose=1,
+        ),
+    ]
+
     print("Training model...")
     model.fit(
         x=[user_inputs, item_inputs],
         y=labels,
-        epochs=15,
+        epochs=12,
         batch_size=1024,
         validation_split=0.1,
+        callbacks=callbacks,
     )
-    # Save the trained weights
     weights_path = os.path.join(
         os.path.dirname(__file__), "two_tower_weights.weights.h5"
     )

@@ -75,7 +75,11 @@ public class RecommendService
         var content = new StringContent(jsonContent, Encoding.UTF8, "application/json");
 
         var response = await _httpClient.PostAsync(url, content);
-        response.EnsureSuccessStatusCode();
+        if (!response.IsSuccessStatusCode)
+        {
+            var errorBody = await response.Content.ReadAsStringAsync();
+            throw new Exception($"Python ML API error ({(int)response.StatusCode}): {errorBody}");
+        }
 
         var jsonResponse = await response.Content.ReadAsStringAsync();
         var result = JsonSerializer.Deserialize<RecommendResponse>(jsonResponse);

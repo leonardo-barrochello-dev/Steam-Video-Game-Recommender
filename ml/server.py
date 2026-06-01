@@ -2,7 +2,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 import numpy as np
 import tensorflow as tf
-from model import build_and_compile_model
+from model import build_and_compile_model, USER_FEATURE_DIM, ITEM_FEATURE_DIM
 from qdrant_manager import QdrantManager
 import json
 import os
@@ -22,7 +22,6 @@ with open(vocab_path, 'r', encoding='utf-8') as f:
     vocab = json.load(f)
 tag_to_idx = {tag: idx for idx, tag in enumerate(vocab)}
 
-# Load Game Metadata from local data/ directory
 print("Caching game tag vectors for real-time inference...")
 meta_path = os.path.join(DATA_DIR, 'games_metadata.json')
 
@@ -44,7 +43,7 @@ print(f"Cached {len(app_tags)} games' tag vectors.")
 
 # --- Model Instantiation & Build ---
 model = build_and_compile_model()
-_ = model([tf.zeros((1, 51)), tf.zeros((1, 51))])
+_ = model([tf.zeros((1, USER_FEATURE_DIM)), tf.zeros((1, ITEM_FEATURE_DIM))])
 
 weights_path = os.path.join(ML_DIR, 'two_tower_weights.weights.h5')
 if os.path.exists(weights_path):
@@ -89,6 +88,8 @@ class RecommendResponse(BaseModel):
 def compute_user_embedding(owned_games: list[SteamGameItem]) -> np.ndarray:
     pref_vector = np.zeros(len(vocab), dtype=np.float32)
     total_hours = 0.0
+    n_games = len(owned_games)
+    unique_tag_indices = set()
 
     for game in owned_games:
         game_hours = game.playtime_forever / 60.0
@@ -97,20 +98,30 @@ def compute_user_embedding(owned_games: list[SteamGameItem]) -> np.ndarray:
         game_vec = app_tags.get(game.appid, np.zeros(len(vocab), dtype=np.float32))
         pref_vector += game_vec * game_hours
 
+        for i, val in enumerate(game_vec):
+            if val > 0:
+                unique_tag_indices.add(i)
+
     sum_pref = pref_vector.sum()
     if sum_pref > 0:
         pref_vector = pref_vector / sum_pref
 
     total_playtime_norm = np.log1p(total_hours)
+    games_owned_norm = np.log1p(n_games)
+    avg_playtime_norm = np.log1p(total_hours / n_games) if n_games > 0 else 0.0
+    unique_genres_norm = np.log1p(len(unique_tag_indices))
 
-    user_features = np.concatenate([[total_playtime_norm], pref_vector]).astype(np.float32)
+    user_features = np.concatenate([
+        [total_playtime_norm, games_owned_norm, avg_playtime_norm, unique_genres_norm],
+        pref_vector
+    ]).astype(np.float32)
 
     input_tensor = tf.constant([user_features], dtype=tf.float32)
     user_emb = model.get_layer('user_tower')(input_tensor)
     return user_emb.numpy()[0]
 
 
-@ app.post("/embed-user")
+@app.post("/embed-user")
 def embed_user(request: EmbeddingRequest):
     try:
         user_embedding = compute_user_embedding(request.owned_games)
@@ -119,7 +130,7 @@ def embed_user(request: EmbeddingRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@ app.post("/recommend")
+@app.post("/recommend")
 def recommend(request: RecommendRequest):
     if qdrant is None:
         raise HTTPException(status_code=503, detail="Qdrant not connected. Ensure Qdrant is running.")
@@ -128,7 +139,7 @@ def recommend(request: RecommendRequest):
         user_emb = compute_user_embedding(request.owned_games)
 
         owned_set = {g.appid for g in request.owned_games}
-        RETRIEVAL_SIZE = 100  # retrieve more than needed, then filter + trim
+        RETRIEVAL_SIZE = 100
 
         hits = qdrant.search(user_emb, top_k=RETRIEVAL_SIZE)
 
