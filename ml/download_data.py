@@ -6,7 +6,7 @@ from pathlib import Path
 DATASET = "antonkozyriev/game-recommendations-on-steam"
 BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = BASE_DIR / "data"
-REQUIRED_FILES = ["games.csv", "recommendations.csv", "users.csv", "games_metadata.json"]
+REQUIRED_FILES = ["games.csv", "recommendations.csv", "games_metadata.json"]
 
 KAGGLE_DIR = Path.home() / ".kaggle"
 KAGGLE_JSON = KAGGLE_DIR / "kaggle.json"

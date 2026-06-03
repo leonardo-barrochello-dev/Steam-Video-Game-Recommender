@@ -3,7 +3,6 @@ from qdrant_client.http.models import (
     Distance,
     VectorParams,
     PointStruct,
-    Batch,
 )
 import numpy as np
 

@@ -8,7 +8,6 @@ builder.Services.AddOpenApi();
 
 // Register HttpClient and Custom Services
 builder.Services.AddHttpClient<SteamApiService>();
-builder.Services.AddHttpClient<EmbeddingService>();
 builder.Services.AddHttpClient<RecommendService>();
 
 var app = builder.Build();

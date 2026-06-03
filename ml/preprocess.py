@@ -188,16 +188,6 @@ def prepare_training_data(item_features, recs_df, vocab, neg_samples_per_pos=1, 
 
     original_labels = recs_df['label'].values
 
-    # Build extended user features: [playtime, owned, avg_pt, unique_tags, tag_prefs]
-    def build_user_feat(uid):
-        pref = user_profiles.get(uid, zero_vec)
-        ut = user_time if 'user_time' in dir() else 0.0
-        gc = user_game_count_dict.get(uid, 0.0)
-        ap = user_avg_playtime_dict.get(uid, 0.0)
-        ug = user_unique_genres_dict.get(uid, 0.0)
-        pt = user_playtime_dict.get(uid, 0.0)
-        return np.concatenate([[pt, gc, ap, ug], pref]).astype(np.float32)
-
     user_ids_arr = recs_df['user_id'].values
     user_feat_list = []
     for uid in user_ids_arr:

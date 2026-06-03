@@ -183,7 +183,7 @@ At startup, `generate_embeddings.py` creates a Qdrant collection named `games`:
 
 | Property | Value |
 |----------|-------|
-| Vector size | 32 (matching embedding_dim) |
+| Vector size | 128 (matching embedding_dim) |
 | Distance metric | Cosine |
 | Payload | `app_id` (int), `name` (str), `genres` (str) |
 

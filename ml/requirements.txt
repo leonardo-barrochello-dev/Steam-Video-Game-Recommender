@@ -1,9 +1,7 @@
 tensorflow
 pandas
 numpy
-scikit-learn
 fastapi
 uvicorn
-requests
 kaggle
 qdrant-client
