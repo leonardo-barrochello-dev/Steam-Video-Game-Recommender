@@ -145,15 +145,6 @@ Returns a JSON array of recommended games:
 ]
 ```
 
-### Data Collection
-
-To fetch a real user's Steam library and persist it:
-
-```bash
-cd ml
-python collect_steam_data.py <steam_id>
-```
-
 ## Project Structure
 
 ```
@@ -165,7 +156,6 @@ python collect_steam_data.py <steam_id>
 │   ├── generate_embeddings.py    # Item embeddings → Qdrant
 │   ├── server.py                 # FastAPI inference server
 │   ├── qdrant_manager.py         # Qdrant client wrapper
-│   ├── collect_steam_data.py     # Steam API data collection
 │   ├── download_data.py          # Dataset download from Kaggle
 │   └── requirements.txt
 ├── api/SteamRecommenderAPI/      # C# Web API
